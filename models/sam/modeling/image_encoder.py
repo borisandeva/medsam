@@ -90,6 +90,13 @@ class ImageEncoderViT(nn.Module):
                 input_size=(img_size // patch_size, img_size // patch_size),
             )
             self.blocks.append(block)
+            # if i< (depth-2):
+               # block.requires_grad_(False) 
+            # print(self.blocks.append(block))
+
+            # if i >= (depth-1):
+            #     block.requires_grad_(True)
+            # print(block.requires_grad_(True))
 
         self.neck = nn.Sequential(
             nn.Conv2d(
@@ -112,15 +119,32 @@ class ImageEncoderViT(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.patch_embed(x)
         if self.pos_embed is not None:
-            x = x + self.pos_embed
+            #by LBK EDIT
+            try:
+                x = x + self.pos_embed
+            except:
+                x = x + self.interpolate_pos_encoding(*x.shape[1:3])
 
+        it = 0
         for blk in self.blocks:
+            #torch.cuda.empty_cache()
             x = blk(x)
+            it += 1
 
         x = self.neck(x.permute(0, 3, 1, 2))
 
         return x
 
+        # by LBK EDIT
+    def interpolate_pos_encoding(self, h, w):
+        height, width = self.pos_embed.shape[1:3]
+
+        patch_pos_embed = nn.functional.interpolate(
+            self.pos_embed.permute(0, 3, 1, 2),
+            scale_factor=(h / height, w / width),
+            mode='bicubic',
+        ).permute(0, 2, 3, 1)
+        return patch_pos_embed
 
 class Block(nn.Module):
     """Transformer blocks with support of window attention and residual propagation blocks"""
@@ -183,21 +207,28 @@ class Block(nn.Module):
             H, W = x.shape[1], x.shape[2]
             x, pad_hw = window_partition(x, self.window_size)
 
+
         ## 3d branch
         if self.args.thd: 
             hh, ww = x.shape[1], x.shape[2]
             depth = self.args.chunk
             xd = rearrange(x, '(b d) h w c -> (b h w) d c ', d=depth)
+            #print(xd.numel(), 'after rearrange1')
             # xd = rearrange(xd, '(b d) n c -> (b n) d c', d=self.in_chans)
             xd = self.norm1(xd)
+            #print(xd.numel(),'after norm1')
             dh, _ = closest_numbers(depth)
             xd = rearrange(xd, 'bhw (dh dw) c -> bhw dh dw c', dh= dh)
+            #print(xd.numel(),'after rearrange2')
             xd = self.Depth_Adapter(self.attn(xd))
+            # print(xd.numel(),'after attn')
             xd = rearrange(xd, '(b n) dh dw c ->(b dh dw) n c', n= hh * ww )
+            #print(xd.numel(),'xd_depth_adapter')
 
         x = self.norm1(x)
         x = self.attn(x)
         x = self.Space_Adapter(x)
+        #print(x.shape,'x_space_adapter')
 
         if self.args.thd:
             xd = rearrange(xd, 'b (hh ww) c -> b  hh ww c', hh= hh )
@@ -209,7 +240,11 @@ class Block(nn.Module):
         x = shortcut + x
         xn = self.norm2(x)
         x = x + self.mlp(xn) + self.scale * self.MLP_Adapter(xn)
+        #print(x.shape,'x_MLP_adapter')
         return x
+    
+
+
 
 
 class Attention(nn.Module):

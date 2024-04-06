@@ -76,6 +76,16 @@ def train_sam(args, net: nn.Module, optimizer, train_loader,
     ind = 0
     # train mode
     net.train()
+
+    #for (name, p) in net.named_parameters():
+    #    if p.requires_grad:
+            # if 'Adapter' not in name:
+    #            p.requires_grad = False
+    #    imge= net.image_encoder(imgs)
+            # else: 
+            #     print(name)
+
+    
     optimizer.zero_grad()
 
     epoch_loss = 0
@@ -90,9 +100,14 @@ def train_sam(args, net: nn.Module, optimizer, train_loader,
     with tqdm(total=len(train_loader), desc=f'Epoch {epoch}', unit='img') as pbar:
         for pack in train_loader:
             imgs = pack['image'].to(dtype = torch.float32, device = GPUdevice)
+            #print(imgs.size())
             masks = pack['label'].to(dtype = torch.float32, device = GPUdevice)
+            #print(masks.size())
             # for k,v in pack['image_meta_dict'].items():
             #     print(k)
+            # if len(imgs.size()) == 5:
+            #     imgs = rearrange(imgs, 'b c d h w -> b c h w d ')
+            #     masks = rearrange(masks, 'b c d h w -> b c h w d ')
             if 'pt' not in pack:
                 imgs, pt, masks = generate_click_prompt(imgs, masks)
             else:
@@ -107,8 +122,9 @@ def train_sam(args, net: nn.Module, optimizer, train_loader,
 
                 imgs = imgs.repeat(1,3,1,1)
                 point_labels = torch.ones(imgs.size(0))
-
+                #print(" before resizing:", imgs.shape)
                 imgs = torchvision.transforms.Resize((args.image_size,args.image_size))(imgs)
+                #print(" after resizing:", imgs.shape)
                 masks = torchvision.transforms.Resize((args.out_size,args.out_size))(masks)
             
             showp = pt
@@ -152,7 +168,9 @@ def train_sam(args, net: nn.Module, optimizer, train_loader,
                 dense_prompt_embeddings=de, 
                 multimask_output=False,
               )
-
+            #print(" pred: ", pred.shape)
+            #print("final mask size: ", masks.shape)
+            # with torch.amp.autocast(device_type='cuda', dtype=torch.float32):
             loss = lossfunc(pred, masks)
 
             pbar.set_postfix(**{'loss (batch)': loss.item()})

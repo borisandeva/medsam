@@ -14,6 +14,16 @@ from .image_encoder import ImageEncoderViT
 from .mask_decoder import MaskDecoder
 from .prompt_encoder import PromptEncoder
 
+# by LBK EDIT
+from torchvision.ops.boxes import batched_nms
+from ..utils.amg import (
+    MaskData,
+    batched_mask_to_box,
+    calculate_stability_score,
+    is_box_near_crop_edge,
+    uncrop_masks,
+)
+
 
 class Sam(nn.Module):
     mask_threshold: float = 0.0
@@ -132,6 +142,115 @@ class Sam(nn.Module):
             )
         return outputs
 
+    # Batch Individual Mask Generation by LBK
+    @torch.no_grad()
+    def individual_forward(
+        self,
+        batched_input: List[Dict[str, Any]],
+        multimask_output: bool,
+        is_low_resol: bool = False,
+    ) -> List[Dict[str, torch.Tensor]]:
+        print(batched_input.shape)
+        input_images = torch.stack([self.lbk_preprocess(x["image"]) for x in batched_input], dim=0)
+        image_embeddings = self.image_encoder(input_images)
+
+        refined_mask_outputs = []
+        for image_record, curr_embedding in zip(batched_input, image_embeddings):
+          if "point_coords" in image_record:
+              points = (image_record["point_coords"], image_record["point_labels"])
+          else:
+              points = None
+          sparse_embeddings, dense_embeddings = self.prompt_encoder(
+              points=points,
+              boxes=image_record.get("boxes", None),
+              masks=image_record.get("mask_inputs", None),
+          )
+          low_res_masks, iou_predictions = self.mask_decoder(
+              image_embeddings=curr_embedding.unsqueeze(0),
+              image_pe=self.prompt_encoder.get_dense_pe(),
+              sparse_prompt_embeddings=sparse_embeddings,
+              dense_prompt_embeddings=dense_embeddings,
+              multimask_output=multimask_output,
+          )
+          print(low_res_masks.shape)
+          # Progressing Intergraion.. by LBK
+          refined_masks = self.postprocess_small_regions(low_res_masks, iou_predictions, *input_images.shape[2:], is_low_resol)
+          if not is_low_resol:
+            refined_masks = F.interpolate(
+              refined_masks.unsqueeze(1).float(),
+              input_images.shape[2:],
+              mode="bilinear",
+              align_corners=False,
+            ).squeeze(1).bool()
+          refined_mask_outputs.append(refined_masks)
+        print(refined_mask_outputs.shape)  
+        return refined_mask_outputs
+    
+     # PostProcess by LBK EDIT
+    def postprocess_small_regions(self, masks, iou_predictions, orig_h, orig_w, is_low_resol):
+
+
+      """
+      Configuration
+      """
+      pred_iou_thresh = 0.7 #0.88
+      stability_score_offset = 1.0
+      stability_score_thresh = 0.7 #0.95
+      box_nms_thresh = 0.7
+
+
+      # Interpolation
+      if not is_low_resol:
+        masks = F.interpolate(
+            masks,
+            (orig_h, orig_w),
+            mode="bilinear",
+            align_corners=False,
+        )
+      else:
+          orig_h, orig_w = masks.shape[2:]
+
+      # Serialize predictions and store in MaskData
+      data = MaskData(
+          masks=masks.flatten(0, 1),
+          iou_preds=iou_predictions.flatten(0, 1),          
+      )
+
+      # Filter by predicted IoU
+      if pred_iou_thresh > 0.0:
+          keep_mask = data["iou_preds"] > pred_iou_thresh
+          data.filter(keep_mask)
+
+      # Calculate stability score
+      data["stability_score"] = calculate_stability_score(
+          data["masks"], self.mask_threshold, stability_score_offset
+      )
+      if stability_score_thresh > 0.0:
+          keep_mask = data["stability_score"] >= stability_score_thresh
+          data.filter(keep_mask)
+
+      # Threshold masks and calculate boxes
+      data["masks"] = data["masks"] > self.mask_threshold
+      data["boxes"] = batched_mask_to_box(data["masks"])
+
+      # Filter boxes that touch crop boundaries
+      keep_mask = ~is_box_near_crop_edge(data["boxes"], [0, 0, orig_w, orig_h], [0, 0, orig_w, orig_h])
+      if not torch.all(keep_mask):
+          data.filter(keep_mask)
+      data['masks'] = uncrop_masks(data["masks"], [0, 0, orig_w, orig_h], orig_h, orig_w)
+
+      # Remove duplicates within this crop.
+      keep_by_nms = batched_nms(
+          data["boxes"].float(),
+          data["iou_preds"],
+          torch.zeros_like(data["boxes"][:, 0]),  # categories
+          iou_threshold=box_nms_thresh,
+      )
+      data.filter(keep_by_nms)
+
+      # making masks
+      return data['masks']
+
     def postprocess_masks(
         self,
         masks: torch.Tensor,
@@ -174,3 +293,10 @@ class Sam(nn.Module):
         padw = self.image_encoder.img_size - w
         x = F.pad(x, (0, padw, 0, padh))
         return x
+
+    # by lbk edit
+    def lbk_preprocess(self, x: torch.Tensor) -> torch.Tensor:
+      """Normalize pixel values and pad to a square input."""
+      # Normalize colors
+      x = (x - self.pixel_mean) / self.pixel_std
+      return x

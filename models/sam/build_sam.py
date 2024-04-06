@@ -42,7 +42,8 @@ def build_sam_vit_l(args, checkpoint=None):
     )
 
 
-def build_sam_vit_b(args, checkpoint=None):
+# by LBK EDIT
+def build_sam_vit_b(args,checkpoint=None, custom_img_size=1024):
     return _build_sam(
         args,
         encoder_embed_dim=768,
@@ -50,6 +51,7 @@ def build_sam_vit_b(args, checkpoint=None):
         encoder_num_heads=12,
         encoder_global_attn_indexes=[2, 5, 8, 11],
         checkpoint=checkpoint,
+        custom_img_size=custom_img_size, # by LBK EDIT
     )
 
 
@@ -61,6 +63,7 @@ sam_model_registry = {
 }
 
 
+# by LBK EDIT
 def _build_sam(
     args,
     encoder_embed_dim,
@@ -68,6 +71,7 @@ def _build_sam(
     encoder_num_heads,
     encoder_global_attn_indexes,
     checkpoint=None,
+    custom_img_size=1024, # by LBK EDIT
 ):
     prompt_embed_dim = 256
     image_size = 1024
@@ -92,8 +96,11 @@ def _build_sam(
         ),
         prompt_encoder=PromptEncoder(
             embed_dim=prompt_embed_dim,
-            image_embedding_size=(image_embedding_size, image_embedding_size),
-            input_image_size=(image_size, image_size),
+            # LBK EDIT (Important)
+            # image_embedding_size=(image_embedding_size, image_embedding_size),
+            # input_image_size=(image_size, image_size),
+            image_embedding_size=(custom_img_size//vit_patch_size, custom_img_size//vit_patch_size),
+            input_image_size=(custom_img_size, custom_img_size),
             mask_in_chans=16,
         ),
         mask_decoder=MaskDecoder(

@@ -108,6 +108,21 @@ class MaskDecoder(nn.Module):
 
         # Prepare output
         return masks, iou_pred
+    
+        # by LBK EDIT
+    @staticmethod
+    def interpolate(x, w, h):
+        height, width = x.shape[2:]
+
+        # we add a small number to avoid floating point error in the interpolation
+        # see discussion at https://github.com/facebookresearch/dino/issues/8
+        w0, h0 = w + 0.1, h + 0.1
+        x = nn.functional.interpolate(
+            x,
+            scale_factor=(w0 / height, h0 / width),
+            mode='bicubic',
+        )
+        return x
 
     def predict_masks(
         self,
@@ -123,16 +138,22 @@ class MaskDecoder(nn.Module):
         tokens = torch.cat((output_tokens, sparse_prompt_embeddings), dim=1)
 
         # Expand per-image data in batch direction to be per-mask
-        if image_embeddings.shape[0] != tokens.shape[0]:
-            src = torch.repeat_interleave(image_embeddings, tokens.shape[0], dim=0)
-        else:
-            src = image_embeddings
-        src = src + dense_prompt_embeddings
+        src = torch.repeat_interleave(image_embeddings, tokens.shape[0], dim=0)
+        #print(" src before interpolate:", src.shape)
+        # by LBK EDIT
+        try:
+            src = src + dense_prompt_embeddings
+        except:
+            src = src + self.interpolate(dense_prompt_embeddings, *src.shape[2:])
         pos_src = torch.repeat_interleave(image_pe, tokens.shape[0], dim=0)
         b, c, h, w = src.shape
-
+        #print(" src", b,c,h,w)
         # Run the transformer
-        hs, src = self.transformer(src, pos_src, tokens)
+        # by LBK EDIT
+        try:
+            hs, src = self.transformer(src, pos_src, tokens)
+        except:
+            hs, src = self.transformer(src, self.interpolate(pos_src, *src.shape[2:]), tokens)
         iou_token_out = hs[:, 0, :]
         mask_tokens_out = hs[:, 1 : (1 + self.num_mask_tokens), :]
 
@@ -144,8 +165,9 @@ class MaskDecoder(nn.Module):
             hyper_in_list.append(self.output_hypernetworks_mlps[i](mask_tokens_out[:, i, :]))
         hyper_in = torch.stack(hyper_in_list, dim=1)
         b, c, h, w = upscaled_embedding.shape
+        #print("masks in decoder:", b, c, h, w)
         masks = (hyper_in @ upscaled_embedding.view(b, c, h * w)).view(b, -1, h, w)
-
+        #print(" masks later: ", masks.shape)
         # Generate mask quality predictions
         iou_pred = self.iou_prediction_head(iou_token_out)
 

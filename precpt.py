@@ -119,6 +119,7 @@ def run_precpt(cnn, normalization_mean, normalization_std,
     # update all the requires_grad fields accordingly
     model.requires_grad_(False)
     input_img.requires_grad_(True)
+    # print(input_img)
 
     model(input_img)
     style_score = 0
@@ -192,12 +193,18 @@ def precpt_loss(cnn, normalization_mean, normalization_std,
             model.add_module("style_loss_{}".format(i), style_loss)
             style_losses.append(style_loss)
 
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            print(name)
+
     # now we trim off the layers after the last content and style losses
     for i in range(len(model) - 1, -1, -1):
         if isinstance(model[i], ContentLoss) or isinstance(model[i], StyleLoss):
             break
 
     model = model[:(i + 1)]
+    # print(model)
+
 
     return model, style_losses, content_losses
 

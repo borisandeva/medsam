@@ -118,7 +118,7 @@ def get_network(args, net, use_gpu=True, gpu_device = 0, distribution = True):
         from models.sam import SamPredictor, sam_model_registry
         from models.sam.utils.transforms import ResizeLongestSide
 
-        net = sam_model_registry['vit_b'](args,checkpoint=args.sam_ckpt).to(device)
+        net = sam_model_registry['vit_b'](args,custom_img_size=args.image_size, checkpoint=args.sam_ckpt).to(device)
     else:
         print('the network name you have entered is not supported yet')
         sys.exit()
@@ -993,9 +993,9 @@ def vis_image(imgs, pred_masks, gt_masks, save_path, reverse = False, points = N
         if points != None:
             for i in range(b):
                 if args.thd:
-                    p = np.round(points.cpu()/args.roi_size * args.out_size).to(dtype = torch.int)
+                    p = torch.round(points.cpu()/args.roi_size * args.out_size).to(dtype = torch.int)
                 else:
-                    p = np.round(points.cpu()/args.image_size * args.out_size).to(dtype = torch.int)
+                    p = torch.round(points.cpu()/args.image_size * args.out_size).to(dtype = torch.int)
                 # gt_masks[i,:,points[i,0]-5:points[i,0]+5,points[i,1]-5:points[i,1]+5] = torch.Tensor([255, 0, 0]).to(dtype = torch.float32, device = torch.device('cuda:' + str(dev)))
                 gt_masks[i,0,p[i,0]-5:p[i,0]+5,p[i,1]-5:p[i,1]+5] = 0.5
                 gt_masks[i,1,p[i,0]-5:p[i,0]+5,p[i,1]-5:p[i,1]+5] = 0.1

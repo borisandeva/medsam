@@ -32,13 +32,26 @@ from tqdm import tqdm
 from torch.utils.data import DataLoader, random_split
 from utils import *
 import function 
+import os 
+from torchsummary import summary
+import multiprocessing
+
+
 
 
 args = cfg.parse_args()
+os.environ['TORCH_CUDA_ALLOC_CONF'] = '0'  # Disables caching
+os.environ['TORCH_CUDA_ALLOC_CONF'] = ':'.join([str(246)] * 8)
 
 GPUdevice = torch.device('cuda', args.gpu_device)
+#torch.cuda.empty_cache()
 
 net = get_network(args, args.net, use_gpu=args.gpu, gpu_device=GPUdevice, distribution = args.distributed)
+
+#print summary of model
+#summary(net, ((3, 128, 128),(1, 256, 256)))
+
+
 if args.pretrain:
     weights = torch.load(args.pretrain)
     net.load_state_dict(weights,strict=False)
@@ -103,7 +116,35 @@ if args.dataset == 'isic':
 elif args.dataset == 'decathlon':
     nice_train_loader, nice_test_loader, transform_train, transform_val, train_list, val_list =get_decath_loader(args)
 
+elif args.dataset == 'postoppancreas':
+    train_dataset = PostopPancreas(args.data_path, mode='Training', prompt='click')
+    test_dataset = PostopPancreas(args.data_path, mode='Test', prompt='click')
 
+    nice_train_loader = DataLoader(train_dataset, batch_size=args.b, shuffle=True, num_workers=8, pin_memory=True)
+    nice_test_loader = DataLoader(test_dataset, batch_size=args.b, shuffle=False, num_workers=8, pin_memory=True)
+
+elif args.dataset == 'postoppancreasraw':
+    # train_dataset = get_postoppancreasraw(args.data_path, mode='Training', prompt='click')
+    # test_dataset = get_postoppancreasraw(args.data_path, mode='Test', prompt='click')
+    train_dataset = PostopPancreasRaw(args.data_path, mode='Training', prompt='click')
+    test_dataset = PostopPancreasRaw(args.data_path, mode='Test', prompt='click')
+
+    nice_train_loader = DataLoader(train_dataset, batch_size=args.b, shuffle=True, num_workers=8, pin_memory=True)
+    nice_test_loader = DataLoader(test_dataset, batch_size=args.b, shuffle=False, num_workers=8, pin_memory=True)
+
+elif args.dataset == 'publicpancreasraw':
+    train_dataset = PublicPancreasRaw(args.data_path, mode='Training', prompt='click', data_augmentation = True)
+    test_dataset = PublicPancreasRaw(args.data_path, mode='Test', prompt='click')
+
+    nice_train_loader = DataLoader(train_dataset, batch_size=args.b, shuffle=True, num_workers=8, pin_memory=True)
+    nice_test_loader = DataLoader(test_dataset, batch_size=args.b, shuffle=False, num_workers=8, pin_memory=True)
+
+# elif args.dataset == 'postoprawpancreas':
+#     train_dataset = PancreasRawDataset(args.data_path, mode='Training', prompt='click')
+#     test_dataset = PancreasRawDataset(args.data_path, mode='Test', prompt='click')
+
+    nice_train_loader = DataLoader(train_dataset, batch_size=args.b, shuffle=True, num_workers=8, pin_memory=True)  
+    nice_test_loader = DataLoader(test_dataset, batch_size=args.b, shuffle=False, num_workers=8, pin_memory=True)
 '''checkpoint path and tensorboard'''
 # iter_per_epoch = len(Glaucoma_training_loader)
 checkpoint_path = os.path.join(settings.CHECKPOINT_PATH, args.net, settings.TIME_NOW)
@@ -145,16 +186,15 @@ for epoch in range(settings.EPOCH):
             if tol < best_tol:
                 best_tol = tol
                 is_best = True
-
-                save_checkpoint({
+            else:
+                is_best = False
+            save_checkpoint({
                 'epoch': epoch + 1,
                 'model': args.net,
                 'state_dict': sd,
                 'optimizer': optimizer.state_dict(),
                 'best_tol': best_tol,
                 'path_helper': args.path_helper,
-            }, is_best, args.path_helper['ckpt_path'], filename="best_checkpoint")
-            else:
-                is_best = False
+            }, is_best, args.path_helper['ckpt_path'], filename="last")
 
 writer.close()

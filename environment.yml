@@ -1,4 +1,4 @@
-name: sam_adapt
+name: sam_adapt2
 channels:
   - pytorch
   - conda-forge
